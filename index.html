@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Card Rewards Finder</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#151515;background:#f6f7f9}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:820px;margin:0 auto;padding:32px 18px 56px}
+header{margin-bottom:24px}h1{font-size:28px;margin:0 0 6px}header p{margin:0;color:#666}
+.card{background:#fff;border:1px solid #e4e6ea;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #00000008}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{display:flex;flex-direction:column;gap:6px}.field.full{grid-column:1/-1}
+label{font-size:13px;font-weight:650;color:#444}input,select,button{font:inherit}input,select{height:42px;border:1px solid #d5d8dd;border-radius:9px;padding:0 11px;background:#fff}
+.actions{display:flex;gap:10px;margin-top:14px}button{border:0;border-radius:9px;padding:11px 16px;cursor:pointer;font-weight:650}.primary{background:#111;color:#fff}.secondary{background:#eef0f3;color:#222}
+.results-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.results-head h2{font-size:18px;margin:0}.muted{color:#777;font-size:13px}
+.result{border:1px solid #e2e4e8;border-radius:12px;padding:15px;margin:10px 0}.result.best{border-color:#111;box-shadow:0 0 0 1px #111}
+.result-top{display:flex;justify-content:space-between;gap:12px}.name{font-weight:750;font-size:17px}.benefit{font-weight:800;font-size:17px}.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tag{font-size:12px;padding:4px 7px;background:#f0f1f3;border-radius:999px}
+.note{font-size:13px;color:#666;margin-top:9px;line-height:1.45}.empty{text-align:center;padding:24px;color:#666}
+.raw{white-space:pre-wrap;background:#f7f7f8;border-radius:9px;padding:12px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.field.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>Card Rewards Finder</h1><p>Enter the transaction details to see eligible cards and the stated benefit.</p></header>
+<section class="card">
+<div class="grid">
+<div class="field"><label>Amount (₹)</label><input id="amount" type="number" min="0" step="1" placeholder="e.g. 2000"></div>
+<div class="field"><label>Mode</label><select id="mode"><option value="">Any</option><option>Online</option><option>Offline</option><option>Online / Offline</option><option>PhonePe App</option><option>PhonePe Scan & Pay</option><option>Outside PhonePe</option><option>Other</option><option>Non-PhonePe UPI</option></select></div>
+<div class="field"><label>Category *</label><input id="category" list="categories" placeholder="e.g. Grocery / Supermarkets"><datalist id="categories"></datalist></div>
+<div class="field"><label>MCC (optional)</label><input id="mcc" placeholder="e.g. 5411"></div>
+<div class="field full"><label>Merchant (optional)</label><input id="merchant" placeholder="e.g. Amazon, supermarket, PhonePe QR"></div>
+</div>
+<div class="actions"><button class="primary" onclick="findCards()">Find best card</button><button class="secondary" onclick="resetForm()">Clear</button></div>
+</section>
+<section id="output"></section>
+</div>
+<script>
+let rules=[];
+const norm=s=>(s||"").toLowerCase().trim();
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function init(){
+ const r=await fetch("./data/card_rewards_rules.json"); const d=await r.json(); rules=d.rules;
+ const cats=[...new Set(rules.map(x=>x.category).filter(Boolean))].sort();
+ document.getElementById("categories").innerHTML=cats.map(x=>`<option value="${esc(x)}">`).join("");
+}
+function modeMatch(ruleMode, input){
+ if(!input) return true;
+ const r=norm(ruleMode), m=norm(input);
+ if(r===m || r==="online / offline") return true;
+ if(m==="online" && r.includes("online")) return true;
+ if(m==="offline" && r.includes("offline")) return true;
+ return false;
+}
+function textMatch(rule, category, merchant, mcc){
+ const c=norm(category), me=norm(merchant), mc=norm(mcc);
+ if(mc && norm(rule.mcc)!==mc) return false;
+ if(c && !(norm(rule.category).includes(c)||c.includes(norm(rule.category)))) return false;
+ if(me && !(norm(rule.merchant).includes(me)||me.includes(norm(rule.merchant)))) return false;
+ return true;
+}
+function benefit(rule, amount){
+ const rate=rule.rate||"";
+ let value=null;
+ const pct=rate.match(/^([\d.]+)%$/);
+ const rp=rate.match(/^([\d.]+)\s*RP\/₹100$/i);
+ if(amount>0 && pct) value=amount*parseFloat(pct[1])/100;
+ if(amount>0 && rp) value=Math.floor(amount/100)*parseFloat(rp[1]);
+ let detail=rate;
+ if(value!==null) detail += pct ? ` · ₹${value.toFixed(2)} cashback` : ` · ${value} RP`;
+ return detail;
+}
+function findCards(){
+ const amount=parseFloat(document.getElementById("amount").value)||0;
+ const mode=document.getElementById("mode").value, category=document.getElementById("category").value;
+ const mcc=document.getElementById("mcc").value, merchant=document.getElementById("merchant").value;
+ if(!category){document.getElementById("output").innerHTML='<div class="card empty">Enter a category to search.</div>';return;}
+ const matches=rules.filter(r=>r.status!=="excluded" && modeMatch(r.mode,mode) && textMatch(r,category,merchant,mcc));
+ const out=document.getElementById("output");
+ if(!matches.length){
+   const raw={amount:amount||null,mode:mode||null,category,mcc:mcc||null,merchant:merchant||null};
+   out.innerHTML=`<div class="card"><div class="results-head"><h2>No matching rule</h2></div><p class="note">No eligible card rule matched these details. You can review the supplied details below and use them to add a new rule.</p><button class="secondary" onclick="document.getElementById('raw').hidden=false">Show supplied details</button><pre id="raw" class="raw" hidden>${esc(JSON.stringify(raw,null,2))}</pre></div>`;
+   return;
+ }
+ const sorted=[...matches].sort((a,b)=>{
+   const av=parseFloat((a.rate||"").replace(/[^\d.]/g,""))||0,bv=parseFloat((b.rate||"").replace(/[^\d.]/g,""))||0;
+   return bv-av;
+ });
+ out.innerHTML=`<div class="card"><div class="results-head"><h2>Recommended cards</h2><span class="muted">${sorted.length} match${sorted.length>1?"es":""}</span></div>`+
+ sorted.map((r,i)=>`<div class="result ${i===0?"best":""}"><div class="result-top"><div><div class="name">${esc(r.card)}</div><div class="tags"><span class="tag">${esc(r.mode)}</span><span class="tag">${esc(r.category)}</span>${r.mcc?`<span class="tag">MCC ${esc(r.mcc)}</span>`:""}</div></div><div class="benefit">${esc(benefit(r,amount))}</div></div><div class="note">${esc(r.merchant)} · ${esc(r.rewardType)} · ${esc(r.statusLabel)}</div></div>`).join("")+
+`<p class="note">Ranking is based on the stated rate only. Reward points are not converted to rupees, so cashback and points are not treated as economically equivalent.</p></div>`;
+}
+function resetForm(){["amount","category","mcc","merchant"].forEach(id=>document.getElementById(id).value="");document.getElementById("mode").value="";document.getElementById("output").innerHTML=""}
+init().catch(e=>document.getElementById("output").innerHTML='<div class="card empty">Could not load card rules. Check the data file.</div>');
+</script>
+</body></html>
